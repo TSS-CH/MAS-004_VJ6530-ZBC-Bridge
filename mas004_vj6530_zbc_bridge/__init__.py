@@ -1,4 +1,4 @@
-﻿from .client import ZbcBridgeClient
+from .client import ZbcBridgeClient
 from .config import Settings, DEFAULT_CFG_PATH
 from .mapper import ZbcMapping, decode_value, encode_value
 

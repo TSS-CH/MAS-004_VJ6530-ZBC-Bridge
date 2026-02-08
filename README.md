@@ -1,4 +1,4 @@
-﻿# MAS-004_VJ6530-ZBC-Bridge
+# MAS-004_VJ6530-ZBC-Bridge
 
 Basis-Client und Daemon fuer Videojet 6530 (TTO) ueber ZBC Binary Protocol.
 
