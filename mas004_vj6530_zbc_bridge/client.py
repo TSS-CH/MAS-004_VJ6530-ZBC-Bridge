@@ -1,31 +1,35 @@
 from __future__ import annotations
 
-import socket
 import struct
-import threading
+from datetime import date, datetime
+from dataclasses import dataclass
+import time
+from typing import Any
 
 from .mapper import ZbcMapping, decode_value, encode_value
-from .protocol import (
-    START,
-    FLAG_ACK,
-    FLAG_NAK,
-    build_ack,
-    build_message,
-    build_packet,
-    parse_message,
-    parse_packet,
-)
+from ._zbc_library import ClarityParameterArchive, MessageId, ZbcClient, build_message, dataclass_to_dict, parse_message
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    profile_name: str
+    machine_name: str
+    machine_model: str
+    job_name: str
+    ribbon_level: str | None
+    active_faults: tuple[str, ...]
+    active_warnings: tuple[str, ...]
 
 
 class ZbcBridgeClient:
-    """Minimal synchronous ZBC client for Videojet 6530."""
+    """Bridge-facing wrapper around the shared MAS-004 ZBC library."""
 
-    def __init__(self, host: str, port: int, timeout_s: float = 2.0):
+    def __init__(self, host: str, port: int, timeout_s: float = 8.0, retry_count: int = 3, retry_delay_s: float = 1.0):
         self.host = (host or "").strip()
         self.port = int(port or 0)
         self.timeout_s = float(timeout_s)
-        self._trx = 0
-        self._lock = threading.Lock()
+        self.retry_count = max(1, int(retry_count))
+        self.retry_delay_s = max(0.0, float(retry_delay_s))
 
     def write(self, mapping: ZbcMapping, value: str) -> tuple[int, bytes]:
         body = struct.pack("<H", mapping.command_id & 0xFFFF) + encode_value(value, mapping.codec, mapping.scale, mapping.offset)
@@ -41,54 +45,91 @@ class ZbcBridgeClient:
     def transact(self, message_id: int, body: bytes = b"") -> tuple[int, bytes]:
         if not self.host or self.port <= 0:
             raise RuntimeError("host/port not configured")
+        return self._with_client(lambda client: parse_message(client._ensure_transport().exchange_message(build_message(message_id, body))), retries=1)
 
-        with socket.create_connection((self.host, self.port), timeout=self.timeout_s) as sock:
-            sock.settimeout(self.timeout_s)
-            trx = self._next_trx()
+    def probe(self) -> ProbeResult:
+        def _collect(client: ZbcClient):
+            profile = client.detect_profile()
+            summary = client.request_summary_info()
+            return profile, dataclass_to_dict(summary)
 
-            message = build_message(message_id, body)
-            packet = build_packet(flags=0x03, transaction_id=trx, sequence_id=0, payload=message, checksum=True)
-            sock.sendall(packet)
+        profile, data = self._with_client(_collect)
+        tags = {tag["name"]: tag["value"] for tag in data.get("tags", [])}
+        machine = tags.get("mch") or {}
+        job = tags.get("jin") or {}
+        lei = tags.get("lei") or {}
+        supplies = tags.get("sup") or {}
+        ribbon_level = None
+        for consumable in supplies.get("consumables", []):
+            if consumable.get("type") == "Ribbon":
+                ribbon_level = consumable.get("level")
+                break
+        return ProbeResult(
+            profile_name=profile.name,
+            machine_name=str(machine.get("name") or ""),
+            machine_model=str(machine.get("model") or ""),
+            job_name=str(job.get("name") or ""),
+            ribbon_level=ribbon_level,
+            active_faults=tuple(entry.get("name", "") for entry in lei.get("faults", [])),
+            active_warnings=tuple(entry.get("name", "") for entry in lei.get("warnings", [])),
+        )
 
-            first = self._read_packet(sock)
-            if first.flags & FLAG_NAK:
-                raise RuntimeError("ZBC transport NAK")
+    def request_current_parameters(self) -> ClarityParameterArchive:
+        return self._with_client(lambda client: client.request_current_parameters())
 
-            response = first
-            if (first.flags & FLAG_ACK) and not first.payload:
-                response = self._read_packet(sock)
-            if response.flags & FLAG_NAK:
-                raise RuntimeError("ZBC payload NAK")
+    def read_current_parameter(self, path: str) -> str | None:
+        leaf = self.request_current_parameters().find_by_path(path)
+        return leaf.value if leaf is not None else None
 
-            if response.payload:
-                sock.sendall(build_ack(response))
+    def write_current_parameters(self, archive: ClarityParameterArchive | bytes | bytearray | str, file_name: str = "CurrentParameters.xml") -> tuple[int, Any]:
+        return self._with_client(lambda client: client.write_current_parameters(archive, file_name=file_name))
 
-            return parse_message(response.payload)
+    def write_current_parameter(self, path: str, value: str | int | float | bool, verify_readback: bool = True) -> tuple[int, str | None]:
+        def _write(client: ZbcClient):
+            message_id, _response = client.update_current_parameter(path, value)
+            verified = None
+            if verify_readback and message_id == MessageId.NUL:
+                verified_leaf = client.request_current_parameters().find_by_path(path)
+                verified = verified_leaf.value if verified_leaf is not None else None
+            return message_id, verified
+        return self._with_client(_write)
 
-    def _next_trx(self) -> int:
-        with self._lock:
-            self._trx = (self._trx + 1) & 0xFFFF
-            return self._trx
+    def summary_dict(self) -> dict[str, Any]:
+        def _summary(client: ZbcClient):
+            profile = client.detect_profile()
+            summary = client.request_summary_info()
+            return profile, summary
+        profile, summary = self._with_client(_summary)
+        return {
+            "profile": profile.name,
+            "summary": _json_safe(dataclass_to_dict(summary)),
+        }
 
-    def _read_packet(self, sock: socket.socket):
-        start = _recv_exact(sock, 1)
-        while start and start[0] != START:
-            start = _recv_exact(sock, 1)
+    def _open_client(self) -> ZbcClient:
+        return ZbcClient(self.host, self.port, timeout_s=self.timeout_s)
 
-        hdr_rest = _recv_exact(sock, 9)
-        size = int.from_bytes(hdr_rest[1:3], "little", signed=False)
-        remaining = size - 10
-        if remaining < 0:
-            raise RuntimeError("invalid packet size")
-        tail = _recv_exact(sock, remaining) if remaining else b""
-        return parse_packet(start + hdr_rest + tail)
+    def _with_client(self, fn, retries: int | None = None):
+        attempts = retries if retries is not None else self.retry_count
+        last_error = None
+        for attempt in range(1, attempts + 1):
+            try:
+                with self._open_client() as client:
+                    return fn(client)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    raise
+                time.sleep(self.retry_delay_s)
+        raise last_error  # pragma: no cover
 
 
-def _recv_exact(sock: socket.socket, n: int) -> bytes:
-    out = bytearray()
-    while len(out) < n:
-        chunk = sock.recv(n - len(out))
-        if not chunk:
-            raise RuntimeError("socket closed")
-        out.extend(chunk)
-    return bytes(out)
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value

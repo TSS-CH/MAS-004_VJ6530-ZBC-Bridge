@@ -1,7 +1,8 @@
-﻿# SUPPORT_RUNBOOK - MAS-004_VJ6530-ZBC-Bridge
+# SUPPORT_RUNBOOK - MAS-004_VJ6530-ZBC-Bridge
 
 ## 1. Positioning
 - Subproject dependent on `MAS-004_RPI-Databridge` orchestration.
+- Uses `MAS-004_ZBC-Library` as shared ZBC transport/message base.
 
 ## 2. Local Setup
 - `python -m venv .venv`
@@ -20,10 +21,20 @@
 ## 4. Verification
 - Service active.
 - Config values (`host`, `port`, `timeout_s`, `simulation`) are valid.
-- Probe output stable (`tcp ok`/expected failures only).
-- For protocol changes, verify packet parsing/building paths in `protocol.py`.
+- Probe output stable (`zbc ok`/expected failures only).
+- Manual live checks:
+  - `python -m mas004_vj6530_zbc_bridge --config /etc/mas004_vj6530_zbc_bridge/config.json --summary-json`
+  - `python -m mas004_vj6530_zbc_bridge --config /etc/mas004_vj6530_zbc_bridge/config.json --read-current-parameter System/TCPIP/BinaryCommsNetworkPort2`
+  - `python -m mas004_vj6530_zbc_bridge --config /etc/mas004_vj6530_zbc_bridge/config.json --write-current-parameter System/TCPIP/JobUpdateReplyDelay 1`
 
-## 5. Sync Rule
+## 5. Controlled Writeback Proof
+- Live verified on 2026-03-13:
+  - `System/TCPIP/JobUpdateReplyDelay`
+  - `0 -> 1 -> 0`
+  - each write acknowledged with `NUL`
+  - each state verified by immediate reread
+
+## 6. Sync Rule
 - Use main repo scripts:
   - `MAS-004_RPI-Databridge/scripts/mas004_multirepo_status.ps1`
   - `MAS-004_RPI-Databridge/scripts/mas004_multirepo_sync.ps1`

@@ -10,8 +10,8 @@ class Settings:
     enabled: bool = True
     simulation: bool = True
     host: str = ""
-    port: int = 0
-    timeout_s: float = 2.0
+    port: int = 3002
+    timeout_s: float = 8.0
     poll_interval_s: float = 2.0
 
     @classmethod
