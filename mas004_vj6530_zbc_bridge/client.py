@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from .mapper import ZbcMapping, decode_value, encode_value
-from ._zbc_library import ClarityParameterArchive, MessageId, ZbcClient, build_message, dataclass_to_dict, parse_message
+from ._zbc_library import ClarityParameterArchive, MessageId, ZbcClient, build_message, dataclass_to_dict, parse_message, parse_zbc_mapping
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,10 @@ class ZbcBridgeClient:
         leaf = self.request_current_parameters().find_by_path(path)
         return leaf.value if leaf is not None else None
 
+    def read_mapped_value(self, mapping: str) -> str | None:
+        parse_zbc_mapping(mapping)  # validation for clearer bridge-side errors
+        return self._with_client(lambda client: client.read_mapped_value(mapping))
+
     def write_current_parameters(self, archive: ClarityParameterArchive | bytes | bytearray | str, file_name: str = "CurrentParameters.xml") -> tuple[int, Any]:
         return self._with_client(lambda client: client.write_current_parameters(archive, file_name=file_name))
 
@@ -92,6 +96,18 @@ class ZbcBridgeClient:
                 verified_leaf = client.request_current_parameters().find_by_path(path)
                 verified = verified_leaf.value if verified_leaf is not None else None
             return message_id, verified
+        return self._with_client(_write)
+
+    def write_mapped_value(self, mapping: str, value: str | int | float | bool, verify_readback: bool = True) -> tuple[int, str | None]:
+        parse_zbc_mapping(mapping)  # validation for clearer bridge-side errors
+
+        def _write(client: ZbcClient):
+            message_id, _response = client.write_mapped_value(mapping, value)
+            verified = None
+            if verify_readback and message_id == MessageId.NUL:
+                verified = client.read_mapped_value(mapping)
+            return message_id, verified
+
         return self._with_client(_write)
 
     def summary_dict(self) -> dict[str, Any]:

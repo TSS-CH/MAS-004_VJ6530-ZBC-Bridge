@@ -53,6 +53,12 @@ cd /opt/MAS-004_VJ6530-ZBC-Bridge
   --write-current-parameter System/TCPIP/JobUpdateReplyDelay 1
 ```
 
+## Workbook-Mapping lesen
+```bash
+./.venv/bin/python -m mas004_vj6530_zbc_bridge --config /etc/mas004_vj6530_zbc_bridge/config.json \
+  --read-mapping "FRQ[CURRENT_PARAMETERS]/System/TCPIP/JobUpdateReplyDelay"
+```
+
 ## Live verifiziert
 - `MAS-004_ZBC-Library` ist jetzt die gemeinsame ZBC-Basis.
 - `FTX` mit File-Typ `CURRENT_PARAMETERS (0x0009)` wurde gegen den echten 6530 erfolgreich verifiziert.

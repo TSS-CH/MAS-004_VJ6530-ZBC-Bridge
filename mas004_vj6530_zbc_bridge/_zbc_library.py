@@ -15,11 +15,11 @@ def _ensure_repo_on_path():
 
 
 try:
-    from mas004_zbc_library import ClarityParameterArchive, MessageId, ZbcClient, dataclass_to_dict  # type: ignore[attr-defined]
+    from mas004_zbc_library import ClarityParameterArchive, MessageId, ZbcClient, dataclass_to_dict, parse_zbc_mapping  # type: ignore[attr-defined]
     from mas004_zbc_library.framing import build_message, parse_message
 except ImportError:
     _ensure_repo_on_path()
-    from mas004_zbc_library import ClarityParameterArchive, MessageId, ZbcClient, dataclass_to_dict  # type: ignore[attr-defined]
+    from mas004_zbc_library import ClarityParameterArchive, MessageId, ZbcClient, dataclass_to_dict, parse_zbc_mapping  # type: ignore[attr-defined]
     from mas004_zbc_library.framing import build_message, parse_message
 
 
@@ -29,5 +29,6 @@ __all__ = [
     "ZbcClient",
     "build_message",
     "dataclass_to_dict",
+    "parse_zbc_mapping",
     "parse_message",
 ]

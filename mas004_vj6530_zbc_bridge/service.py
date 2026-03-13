@@ -35,6 +35,8 @@ def main() -> int:
     ap.add_argument("--summary-json", action="store_true", help="Print current ZBC summary as JSON and exit.")
     ap.add_argument("--read-current-parameter", default="", help="Read a current-parameter XML path and exit.")
     ap.add_argument("--write-current-parameter", nargs=2, metavar=("PATH", "VALUE"), help="Write a current-parameter XML path and verify it.")
+    ap.add_argument("--read-mapping", default="", help="Read a workbook-style ZBC mapping and exit.")
+    ap.add_argument("--write-mapping", nargs=2, metavar=("MAPPING", "VALUE"), help="Write a workbook-style ZBC mapping and verify it.")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -45,7 +47,7 @@ def main() -> int:
     cfg_path = args.config
     cfg = Settings.load(cfg_path)
 
-    if args.summary_json or args.read_current_parameter or args.write_current_parameter:
+    if args.summary_json or args.read_current_parameter or args.write_current_parameter or args.read_mapping or args.write_mapping:
         client = ZbcBridgeClient(cfg.host, int(cfg.port), timeout_s=float(cfg.timeout_s))
         if args.summary_json:
             print(json.dumps(client.summary_dict(), indent=2))
@@ -56,6 +58,14 @@ def main() -> int:
         if args.write_current_parameter:
             path, value = args.write_current_parameter
             message_id, verified = client.write_current_parameter(path, value, verify_readback=True)
+            print(json.dumps({"message_id": int(message_id), "verified_value": verified}, indent=2))
+            return 0
+        if args.read_mapping:
+            print(client.read_mapped_value(args.read_mapping))
+            return 0
+        if args.write_mapping:
+            mapping, value = args.write_mapping
+            message_id, verified = client.write_mapped_value(mapping, value, verify_readback=True)
             print(json.dumps({"message_id": int(message_id), "verified_value": verified}, indent=2))
             return 0
 

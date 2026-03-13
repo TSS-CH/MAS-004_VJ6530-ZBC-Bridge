@@ -13,10 +13,13 @@
   - `--summary-json`
   - `--read-current-parameter`
   - `--write-current-parameter`
+  - `--read-mapping`
+  - `--write-mapping`
 - Corrected standard ZBC port in config to `3002`.
 - Live confirmed:
   - `FTX[CURRENT_PARAMETERS]` accepted by the 6530
   - controlled writeback `JobUpdateReplyDelay 0 -> 1 -> 0`
+- Bridge client can now resolve workbook-style `ZBC Mapping:` strings directly.
 
 ## 2026-03-04
 - Added support memory files:
