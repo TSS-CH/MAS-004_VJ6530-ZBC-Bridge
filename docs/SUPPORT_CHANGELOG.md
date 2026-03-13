@@ -1,5 +1,9 @@
 # SUPPORT_CHANGELOG - MAS-004_VJ6530-ZBC-Bridge
 
+## 2026-03-13 (Batch Mapping Reads)
+- Bridge client now exposes `read_mapped_values()` and forwards to the shared ZBC library.
+- This is used by the main Raspi project to poll all mapped `TTE` / `TTW` states via one live summary read per cycle.
+
 ## 2026-03-13
 - Bridge switched to `MAS-004_ZBC-Library`:
   - shared profile detection

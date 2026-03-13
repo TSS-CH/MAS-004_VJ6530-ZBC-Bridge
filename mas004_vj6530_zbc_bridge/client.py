@@ -85,6 +85,9 @@ class ZbcBridgeClient:
         parse_zbc_mapping(mapping)  # validation for clearer bridge-side errors
         return self._with_client(lambda client: client.read_mapped_value(mapping))
 
+    def read_mapped_values(self, mappings: dict[str, str]) -> dict[str, str | None]:
+        return self._with_client(lambda client: client.read_mapped_values(mappings))
+
     def write_current_parameters(self, archive: ClarityParameterArchive | bytes | bytearray | str, file_name: str = "CurrentParameters.xml") -> tuple[int, Any]:
         return self._with_client(lambda client: client.write_current_parameters(archive, file_name=file_name))
 

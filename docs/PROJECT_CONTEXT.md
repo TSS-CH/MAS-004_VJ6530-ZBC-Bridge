@@ -18,6 +18,7 @@
 - This bridge keeps the 6530-specific operational layer:
   - summary probing
   - current-parameter read/write
+  - batched workbook-mapping resolution for the Raspi poller
   - legacy compatibility methods for raw mapped transactions
 
 ## Live Verified Capability
