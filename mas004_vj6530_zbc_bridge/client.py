@@ -20,6 +20,9 @@ from ._zbc_library import (
     dataclass_to_dict,
     parse_message,
     parse_zbc_mapping,
+    resolve_summary_mapping,
+    resolve_summary_mappings,
+    summary_to_status_values,
 )
 
 
@@ -37,13 +40,23 @@ class ProbeResult:
 class ZbcBridgeClient:
     """Bridge-facing wrapper around the shared MAS-004 ZBC library."""
 
-    def __init__(self, host: str, port: int, timeout_s: float = 8.0, retry_count: int = 3, retry_delay_s: float = 1.0):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        timeout_s: float = 8.0,
+        retry_count: int = 1,
+        retry_delay_s: float = 0.2,
+        current_parameters_cache_ttl_s: float = 30.0,
+        summary_cache_ttl_s: float = 3.0,
+    ):
         self.host = (host or "").strip()
         self.port = int(port or 0)
         self.timeout_s = float(timeout_s)
         self.retry_count = max(1, int(retry_count))
         self.retry_delay_s = max(0.0, float(retry_delay_s))
-        self.cache_ttl_s = 1.0
+        self.current_parameters_cache_ttl_s = max(0.0, float(current_parameters_cache_ttl_s or 0.0))
+        self.summary_cache_ttl_s = max(0.0, float(summary_cache_ttl_s or 0.0))
         self._profile = None
         self._current_parameters_cache: ClarityParameterArchive | None = None
         self._current_parameters_cached_at = 0.0
@@ -97,7 +110,7 @@ class ZbcBridgeClient:
 
     def request_current_parameters(self) -> ClarityParameterArchive:
         with self._lock:
-            if self._current_parameters_cache is not None and self._cache_valid(self._current_parameters_cached_at):
+            if self._current_parameters_cache is not None and self._cache_valid(self._current_parameters_cached_at, self.current_parameters_cache_ttl_s):
                 return self._current_parameters_cache
 
         archive = self._with_client(lambda client: client.request_current_parameters(force_refresh=True))
@@ -118,38 +131,39 @@ class ZbcBridgeClient:
             leaf = self.request_current_parameters().find_by_path(spec.path)
             return leaf.value if leaf is not None else None
         if isinstance(spec, (ErrorStateMapping, StatusMapping)):
-            summary = self.summary_dict(force_refresh=False)
-            status_values = dict(summary.get("status_values") or {})
+            summary_payload = self.summary_dict(force_refresh=False)
+            summary_dict = summary_payload.get("summary") or {}
+            status_values = dict(summary_payload.get("status_values") or {})
             if isinstance(spec, ErrorStateMapping):
-                return "1" if _has_matching_error_dict(summary.get("summary") or {}, spec) else "0"
+                return "1" if _has_matching_error_dict(summary_dict, spec) else "0"
             return _status_value_as_text(status_values, spec.name)
         if isinstance(spec, CommandMapping):
             return str(self._status_snapshot.get("last_command") or "")
         raise ValueError(f"unsupported ZBC mapping: {mapping!r}")
 
     def read_mapped_values(self, mappings: dict[str, str]) -> dict[str, str | None]:
-        with self._lock:
-            need_summary = False
-            need_current = False
-            parsed_specs: dict[str, Any] = {}
-            for key, mapping in mappings.items():
-                spec = parse_zbc_mapping(mapping)
-                if spec is None:
-                    raise ValueError(f"unsupported ZBC mapping: {mapping!r}")
-                parsed_specs[key] = spec
-                need_current = need_current or isinstance(spec, CurrentParameterMapping)
-                need_summary = need_summary or isinstance(spec, (ErrorStateMapping, StatusMapping))
+        need_summary = False
+        need_current = False
+        parsed_specs: dict[str, Any] = {}
+        for key, mapping in mappings.items():
+            spec = parse_zbc_mapping(mapping)
+            if spec is None:
+                raise ValueError(f"unsupported ZBC mapping: {mapping!r}")
+            parsed_specs[key] = spec
+            need_current = need_current or isinstance(spec, CurrentParameterMapping)
+            need_summary = need_summary or isinstance(spec, (ErrorStateMapping, StatusMapping))
 
         archive = self.request_current_parameters() if need_current else None
-        summary = self.summary_dict(force_refresh=False) if need_summary else None
-        status_values = dict((summary or {}).get("status_values") or {})
+        summary_payload = self.summary_dict(force_refresh=False) if need_summary else None
+        summary_dict = dict((summary_payload or {}).get("summary") or {})
+        status_values = dict((summary_payload or {}).get("status_values") or {})
         resolved: dict[str, str | None] = {}
         for key, spec in parsed_specs.items():
             if isinstance(spec, CurrentParameterMapping):
                 leaf = archive.find_by_path(spec.path) if archive is not None else None
                 resolved[key] = leaf.value if leaf is not None else None
             elif isinstance(spec, ErrorStateMapping):
-                resolved[key] = "1" if _has_matching_error_dict((summary or {}).get("summary") or {}, spec) else "0"
+                resolved[key] = "1" if _has_matching_error_dict(summary_dict, spec) else "0"
             elif isinstance(spec, StatusMapping):
                 resolved[key] = _status_value_as_text(status_values, spec.name)
             elif isinstance(spec, CommandMapping):
@@ -207,7 +221,7 @@ class ZbcBridgeClient:
 
     def summary_dict(self, force_refresh: bool = False) -> dict[str, Any]:
         with self._lock:
-            if not force_refresh and self._summary_cache is not None and self._cache_valid(self._summary_cached_at):
+            if not force_refresh and self._summary_cache is not None and self._cache_valid(self._summary_cached_at, self.summary_cache_ttl_s):
                 return dict(self._summary_cache)
 
         def _summary(client: ZbcClient):
@@ -215,10 +229,11 @@ class ZbcBridgeClient:
             summary = client.request_summary_info()
             return profile, summary
         profile, summary = self._with_client(_summary)
+        snapshot = dict(self._status_snapshot)
         summary_payload = {
             "profile": profile.name,
             "summary": _json_safe(dataclass_to_dict(summary)),
-            "status_values": _json_safe(client_status_values(summary, self._status_snapshot)),
+            "status_values": _json_safe(summary_to_status_values(summary, snapshot=snapshot)),
         }
         with self._lock:
             self._summary_cache = dict(summary_payload)
@@ -226,7 +241,13 @@ class ZbcBridgeClient:
         return summary_payload
 
     def _open_client(self) -> ZbcClient:
-        return ZbcClient(self.host, self.port, timeout_s=self.timeout_s, profile=self._profile, cache_ttl_s=self.cache_ttl_s)
+        return ZbcClient(
+            self.host,
+            self.port,
+            timeout_s=self.timeout_s,
+            profile=self._profile,
+            cache_ttl_s=max(self.current_parameters_cache_ttl_s, self.summary_cache_ttl_s),
+        )
 
     def _with_client(self, fn, retries: int | None = None):
         attempts = retries if retries is not None else self.retry_count
@@ -248,6 +269,10 @@ class ZbcBridgeClient:
         with self._lock:
             self._status_snapshot.update(values)
 
+    def status_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._status_snapshot)
+
     def invalidate_current_parameters_cache(self):
         with self._lock:
             self._current_parameters_cache = None
@@ -258,8 +283,8 @@ class ZbcBridgeClient:
             self._summary_cache = None
             self._summary_cached_at = 0.0
 
-    def _cache_valid(self, cached_at: float) -> bool:
-        return (time.monotonic() - cached_at) <= self.cache_ttl_s
+    def _cache_valid(self, cached_at: float, ttl_s: float) -> bool:
+        return ttl_s > 0.0 and (time.monotonic() - cached_at) <= ttl_s
 
 
 def _json_safe(value: Any) -> Any:

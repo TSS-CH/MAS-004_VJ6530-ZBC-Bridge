@@ -1,5 +1,15 @@
 # SUPPORT_CHANGELOG - MAS-004_VJ6530-ZBC-Bridge
 
+## 2026-03-13 (Longer Parameter Cache + Faster Failure Path)
+- Bridge client now keeps separate cache windows:
+  - `CURRENT_PARAMETERS` cache defaults to 30s
+  - summary/status cache defaults to 3s
+- Default live retry policy was shortened to fail fast on the local machine LAN:
+  - `retry_count = 1`
+  - `retry_delay_s = 0.2`
+- Exposed a `status_snapshot()` helper for upper layers that merge async state into status resolution.
+- Result: repeated `TTP` reads no longer re-download `CurrentParameters.xml` every second.
+
 ## 2026-03-13 (Batch Mapping Reads)
 - Bridge client now exposes `read_mapped_values()` and forwards to the shared ZBC library.
 - This is used by the main Raspi project to poll all mapped `TTE` / `TTW` states via one live summary read per cycle.

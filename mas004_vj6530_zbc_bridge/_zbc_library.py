@@ -35,6 +35,9 @@ from mas004_zbc_library import (  # type: ignore[attr-defined]
     ZbcClient,
     dataclass_to_dict,
     parse_zbc_mapping,
+    resolve_summary_mapping,
+    resolve_summary_mappings,
+    summary_to_status_values,
 )
 from mas004_zbc_library.framing import build_message, parse_message
 
@@ -52,4 +55,7 @@ __all__ = [
     "dataclass_to_dict",
     "parse_zbc_mapping",
     "parse_message",
+    "resolve_summary_mapping",
+    "resolve_summary_mappings",
+    "summary_to_status_values",
 ]
